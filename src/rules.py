@@ -1,13 +1,18 @@
 """住房贷款纾困申请与履约跟踪领域规则与状态转换。"""
-from typing import Any, Dict, Iterable, Tuple
+from typing import Any, Dict, Iterable, List, Tuple
 
 from .domain import Actor, Conflict, ValidationError, boolean, choice, integer, number, text, text_list
 
 
 INITIAL_STATE = "submitted"
+SETTLED_STATE = "settled"
 CREATE_ROLES = {'intake_officer'}
-ACTION_ROLES = {'assess': {'intake_officer'}, 'approve': {'underwriter'}, 'activate': {'servicer'}, 'cure': {'servicer'}, 'default': {'servicer'}}
-TRANSITIONS = {'assess': {'submitted': 'assessed'}, 'approve': {'assessed': 'approved'}, 'activate': {'approved': 'active'}, 'cure': {'active': 'cured'}, 'default': {'active': 'defaulted'}}
+ACTION_ROLES = {'assess': {'intake_officer'}, 'approve': {'underwriter'}, 'activate': {'servicer'}, 'cure': {'servicer'}, 'default': {'servicer'}, 'settle': {'servicer'}}
+TRANSITIONS = {'assess': {'submitted': 'assessed'}, 'approve': {'assessed': 'approved'}, 'activate': {'approved': 'active'}, 'cure': {'active': 'cured'}, 'default': {'active': 'defaulted'}, 'settle': {'active': SETTLED_STATE, 'cured': SETTLED_STATE}}
+BORROWER_COUNT = 2
+BORROWER_CHANGE_INITIATE_ROLES = {'servicer'}
+BORROWER_CHANGE_REVIEW_ROLES = {'servicer'}
+COLLECTION_STATES = ('active', 'defaulted')
 
 
 class DomainRules:
@@ -25,6 +30,57 @@ class DomainRules:
     def role_can_action(self, role: str, action: str) -> bool:
         return role == "admin" or role in ACTION_ROLES.get(action, set())
 
+    def role_can_initiate_borrower_change(self, role: str) -> bool:
+        return role == "admin" or role in BORROWER_CHANGE_INITIATE_ROLES
+
+    def role_can_review_borrower_change(self, role: str) -> bool:
+        return role == "admin" or role in BORROWER_CHANGE_REVIEW_ROLES
+
+    def is_settled(self, record: Dict[str, Any]) -> bool:
+        return record["state"] == SETTLED_STATE
+
+    @staticmethod
+    def validate_borrowers(payload: Dict[str, Any], key: str = "borrowers") -> List[Dict[str, Any]]:
+        """每笔贷款固定记录两名还款人，责任比例（0-100）合计必须达到100%。"""
+        value = payload.get(key)
+        if not isinstance(value, list) or len(value) != BORROWER_COUNT:
+            raise ValidationError("贷款必须记录两名还款人")
+        borrowers: List[Dict[str, Any]] = []
+        person_ids = set()
+        total = 0.0
+        for index in range(BORROWER_COUNT):
+            item = value[index]
+            if not isinstance(item, dict):
+                raise ValidationError("还款人信息必须是对象")
+            person_id = text(item, "person_id")
+            name = text(item, "name")
+            share = number(item, "share", 0, 100)
+            if person_id in person_ids:
+                raise ValidationError("两名还款人不能是同一人")
+            person_ids.add(person_id)
+            total += share
+            borrowers.append({
+                "person_id": person_id,
+                "name": name,
+                "share": round(share, 2),
+                "kind": "primary" if index == 0 else "secondary",
+            })
+        if abs(round(total, 2) - 100.0) > 0.01:
+            raise ValidationError("两名还款人责任比例合计必须达到100%")
+        return borrowers
+
+    def prepare_borrower_change(self, record: Dict[str, Any], data: Dict[str, Any]) -> Dict[str, Any]:
+        if self.is_settled(record):
+            raise Conflict("贷款已结清，不允许变更共同借款人")
+        new_borrowers = self.validate_borrowers(data)
+        current = record["payload"].get("borrowers", [])
+        current_key = [(item["person_id"], item["name"], item["share"]) for item in current]
+        new_key = [(item["person_id"], item["name"], item["share"]) for item in new_borrowers]
+        if current_key == new_key:
+            raise Conflict("变更后还款人名单与当前一致，无需发起变更")
+        reason = text(data or {}, "reason")
+        return {"borrowers": new_borrowers, "reason": reason}
+
     def validate_create(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         p = dict(payload)
         income = number(p, "monthly_income", 1)
@@ -36,6 +92,8 @@ class DomainRules:
         integer(p, "requested_months", 1, 24)
         if p["monthly_expenses"] >= income:
             raise ValidationError("支出不能达到或超过收入")
+        p["borrowers"] = self.validate_borrowers(p)
+        p["borrower_id"] = p["borrowers"][0]["person_id"]
         return p
 
     def prepare_create(self, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -100,5 +158,8 @@ class DomainRules:
         elif action == "default":
             changes["default_reason"] = text(data, "default_reason")
             summary = "纾困方案违约"
+        elif action == "settle":
+            changes["settle_note"] = text(data, "settle_note")
+            summary = "贷款已结清"
         p.update(changes)
         return new_state, p, summary or ("已执行%s" % action)

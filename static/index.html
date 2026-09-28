@@ -9,25 +9,43 @@
     main { max-width: 960px; margin: auto; }
     button { padding: .55rem .9rem; cursor: pointer; }
     pre { background: #f4f6f8; padding: 1rem; overflow: auto; border-radius: 8px; }
-    .row { display: flex; gap: 1rem; align-items: center; }
+    .row { display: flex; gap: 1rem; align-items: center; flex-wrap: wrap; margin-bottom: .6rem; }
+    input { padding: .45rem; width: 7rem; }
+    .hint { color: #5b6770; font-size: .9rem; }
   </style>
 </head>
 <body>
 <main>
   <h1>住房贷款纾困申请与履约跟踪</h1>
-  <p>最小演示页。完整业务流程通过README中的JSON接口调用。</p>
-  <div class="row"><button id="load">加载记录</button><button id="stats">查看状态统计</button></div>
+  <p>最小演示页。共同借款人变更（发起 → 另一名客服复核确认）通过README中的JSON接口调用。</p>
+  <div class="row">
+    <button id="load">加载记录</button>
+    <button id="stats">统计（含责任份额）</button>
+    <button id="collections">催收名单（当前生效）</button>
+  </div>
+  <div class="row">
+    <input id="recordId" placeholder="记录ID" value="1">
+    <button id="detail">记录详情</button>
+    <button id="changes">变更单列表</button>
+    <button id="audit">审计时间线</button>
+  </div>
+  <p class="hint">复核接口：POST /api/borrower-changes/{变更单ID}/confirm|reject，发起人不能复核自己发起的变更。</p>
   <pre id="output">点击上方按钮读取服务状态。</pre>
 </main>
 <script>
 const headers = {"X-User-Id":"demo-admin","X-Role":"admin","X-Org":"demo"};
-async function show(path) {
-  const response = await fetch(path, {headers});
+async function show(path, options) {
+  const response = await fetch(path, Object.assign({headers}, options || {}));
   const data = await response.json();
   document.getElementById("output").textContent = JSON.stringify(data, null, 2);
 }
+const id = () => Number(document.getElementById("recordId").value);
 document.getElementById("load").onclick = () => show("/api/records?limit=20");
 document.getElementById("stats").onclick = () => show("/api/stats");
+document.getElementById("collections").onclick = () => show("/api/collections");
+document.getElementById("detail").onclick = () => show(`/api/records/${id()}`);
+document.getElementById("changes").onclick = () => show(`/api/records/${id()}/borrower-changes`);
+document.getElementById("audit").onclick = () => show(`/api/records/${id()}/audit`);
 </script>
 </body>
 </html>

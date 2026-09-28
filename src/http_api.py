@@ -12,6 +12,8 @@ from .domain import Actor, DomainError, PermissionDenied, ValidationError
 RECORD_RE = re.compile(r"^/api/records/(\d+)$")
 ACTION_RE = re.compile(r"^/api/records/(\d+)/actions/([a-z_]+)$")
 AUDIT_RE = re.compile(r"^/api/records/(\d+)/audit$")
+BORROWER_CHANGES_RE = re.compile(r"^/api/records/(\d+)/borrower-changes$")
+CHANGE_REVIEW_RE = re.compile(r"^/api/borrower-changes/(\d+)/(confirm|reject)$")
 
 
 def make_handler(service: Any, static_dir: Path):
@@ -84,6 +86,14 @@ def make_handler(service: Any, static_dir: Path):
                 if match:
                     self._send(200, {"items": service.timeline(self._actor(), int(match.group(1)))})
                     return
+                match = BORROWER_CHANGES_RE.match(parsed.path)
+                if match:
+                    self._send(200, {"items": service.borrower_changes(self._actor(), int(match.group(1)))})
+                    return
+                if parsed.path == "/api/collections":
+                    query = parse_qs(parsed.query)
+                    self._send(200, {"items": service.collections(self._actor(), int(query.get("limit", ["100"])[0]))})
+                    return
                 if parsed.path == "/api/stats":
                     self._send(200, service.stats(self._actor()))
                     return
@@ -106,6 +116,23 @@ def make_handler(service: Any, static_dir: Path):
                         raise ValidationError("expected_version必须是整数")
                     record = service.act(self._actor(), int(match.group(1)), version, match.group(2), body.get("data", {}))
                     self._send(200, record)
+                    return
+                match = BORROWER_CHANGES_RE.match(parsed.path)
+                if match:
+                    version = body.get("expected_version")
+                    if not isinstance(version, int):
+                        raise ValidationError("expected_version必须是整数")
+                    change = service.initiate_borrower_change(
+                        self._actor(), int(match.group(1)), version, body.get("data", {})
+                    )
+                    self._send(201, change)
+                    return
+                match = CHANGE_REVIEW_RE.match(parsed.path)
+                if match:
+                    change = service.review_borrower_change(
+                        self._actor(), int(match.group(1)), match.group(2) == "confirm", body.get("data", {})
+                    )
+                    self._send(200, change)
                     return
                 self._send(404, {"error": "not_found", "message": "路径不存在"})
             except Exception as exc:
