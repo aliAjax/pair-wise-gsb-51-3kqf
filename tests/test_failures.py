@@ -6,7 +6,7 @@ from app import build_service
 from src.domain import Actor, Conflict, PermissionDenied
 
 
-CREATE_DATA = {'monthly_income': 18000.0, 'monthly_expenses': 9000.0, 'monthly_payment': 7000.0, 'arrears': 12000.0, 'hardship_factor': 0.5, 'program_type': 'reduction', 'requested_months': 9}
+CREATE_DATA = {'monthly_income': 18000.0, 'monthly_expenses': 9000.0, 'monthly_payment': 7000.0, 'arrears': 12000.0, 'hardship_factor': 0.5, 'program_type': 'reduction', 'requested_months': 9, 'borrowers': [{'person_id': 'P1001', 'name': '张三', 'share_pct': 60}, {'person_id': 'P1002', 'name': '李四', 'share_pct': 40}]}
 FLOW = [('assess', 'intake_officer', {'assessment_note': '收入波动'}, 'assessed'), ('approve', 'underwriter', {'exception_approved': False}, 'approved'), ('activate', 'servicer', {'borrower_ack': True}, 'active'), ('cure', 'servicer', {'arrears_cleared': True}, 'cured')]
 
 

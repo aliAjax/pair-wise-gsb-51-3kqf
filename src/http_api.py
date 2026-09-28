@@ -12,6 +12,9 @@ from .domain import Actor, DomainError, PermissionDenied, ValidationError
 RECORD_RE = re.compile(r"^/api/records/(\d+)$")
 ACTION_RE = re.compile(r"^/api/records/(\d+)/actions/([a-z_]+)$")
 AUDIT_RE = re.compile(r"^/api/records/(\d+)/audit$")
+CHANGES_RE = re.compile(r"^/api/records/(\d+)/borrower-changes$")
+CHANGE_DETAIL_RE = re.compile(r"^/api/borrower-changes/(\d+)$")
+CHANGE_ACTION_RE = re.compile(r"^/api/borrower-changes/(\d+)/(confirm|reject|cancel)$")
 
 
 def make_handler(service: Any, static_dir: Path):
@@ -84,6 +87,22 @@ def make_handler(service: Any, static_dir: Path):
                 if match:
                     self._send(200, {"items": service.timeline(self._actor(), int(match.group(1)))})
                     return
+                match = CHANGES_RE.match(parsed.path)
+                if match:
+                    self._send(200, {"items": service.list_borrower_changes(self._actor(), int(match.group(1)))})
+                    return
+                match = CHANGE_DETAIL_RE.match(parsed.path)
+                if match:
+                    self._send(200, service.get_borrower_change(self._actor(), int(match.group(1))))
+                    return
+                if parsed.path == "/api/collection":
+                    query = parse_qs(parsed.query)
+                    self._send(200, service.collection_list(
+                        self._actor(),
+                        state=query.get("state", [None])[0],
+                        limit=int(query.get("limit", ["100"])[0]),
+                    ))
+                    return
                 if parsed.path == "/api/stats":
                     self._send(200, service.stats(self._actor()))
                     return
@@ -106,6 +125,22 @@ def make_handler(service: Any, static_dir: Path):
                         raise ValidationError("expected_version必须是整数")
                     record = service.act(self._actor(), int(match.group(1)), version, match.group(2), body.get("data", {}))
                     self._send(200, record)
+                    return
+                match = CHANGES_RE.match(parsed.path)
+                if match:
+                    change = service.request_borrower_change(self._actor(), int(match.group(1)), body.get("data", {}))
+                    self._send(201, change)
+                    return
+                match = CHANGE_ACTION_RE.match(parsed.path)
+                if match:
+                    change_id = int(match.group(1))
+                    operation = match.group(2)
+                    if operation == "cancel":
+                        self._send(200, service.cancel_borrower_change(self._actor(), change_id))
+                    else:
+                        self._send(200, service.review_borrower_change(
+                            self._actor(), change_id, body.get("data", {}), approved=(operation == "confirm"),
+                        ))
                     return
                 self._send(404, {"error": "not_found", "message": "路径不存在"})
             except Exception as exc:
